@@ -3,4 +3,4 @@ flask-cors
 python-dotenv
 requests
 gunicorn
-agno-ai
+agno
