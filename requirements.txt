@@ -8,4 +8,5 @@ openai
 lancedb
 duckduckgo-search
 resend
-
+langchain-openai
+browser-use
