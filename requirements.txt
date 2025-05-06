@@ -6,4 +6,6 @@ gunicorn
 agno
 openai
 lancedb
+duckduckgo-search
+resend
 
