@@ -1,4 +1,6 @@
 import os
+import json
+import urllib.request
 from langchain_openai import ChatOpenAI
 from agno.tools import Toolkit
 from browser_use import Agent, Browser, BrowserConfig, BrowserContextConfig
@@ -25,18 +27,24 @@ class BrowserUseToolkit(Toolkit):
                 )
                 
                 browser_config = BrowserConfig(
+                    headless=False,
+                    disable_security=True,
+                    cdp_url="http://localhost:9222",
                     new_context_config=context_config,
                     _force_keep_browser_alive=True,  # THIS IS CRUCIAL
-                    headless=False,
                 )
                 
                 # Initialize browser with our persistent config
                 browser = Browser(config=browser_config)
                 
+                # Create new context and new tab
+                browser_context = await browser.new_context()
+                await browser_context.create_new_tab("about:blank")
+                
                 self.active_agent = Agent(
                     llm=self.llm,
                     task=task_description,
-                    browser=browser
+                    browser_context=browser_context
                 )
             else:
                 # Reuse the existing agent with a new task

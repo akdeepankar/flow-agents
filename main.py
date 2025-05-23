@@ -20,6 +20,8 @@ from browser_toolkit import BrowserUseToolkit
 from razorpay_toolkit import RazorpayPaymentLink
 from razorpay_toolkit import RazorpayTrackerToolkit
 from agno.tools.resend import ResendTools
+from analyze_toolkit import AnalyzeImageToolkit  # Add this import
+from parallel_browser_toolkit import ParallelBrowserToolkit  # Add this import
 
 load_dotenv()
 
@@ -28,6 +30,8 @@ CORS(app)
 
 # Initialize browser toolkit (persistent session)
 browseruse_toolkit = BrowserUseToolkit()
+# Initialize parallel browser toolkit
+parallel_browser_toolkit = ParallelBrowserToolkit()
 
 # Initialize Razorpay toolkit
 razorpaypayment_toolkit = RazorpayPaymentLink()
@@ -56,8 +60,17 @@ image_agent = Agent(
     name="Image Analysis Agent",
     role="Analyze images and extract visual insights or design inspiration.",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[DuckDuckGoTools()],
+    tools=[AnalyzeImageToolkit()],  # Replace DuckDuckGoTools with AnalyzeImageToolkit
     markdown=True,
+    instructions="""
+    IMAGE ANALYSIS PROTOCOL:
+    1. When analyzing images, use the analyze_current_tab tool to:
+       - Get detailed descriptions of all images on the page
+       - Extract visual insights and design inspiration
+       - Identify key elements and subjects
+    2. Ensure Chrome browser has the target page open
+    3. Provide comprehensive analysis of visual content
+    """,
 )
 
 accessibility_agent = Agent(
@@ -105,6 +118,22 @@ brand_agent = Agent(
     show_tool_calls=True,
 )
 
+# Add Language Expert Agent
+language_agent = Agent(
+    name="Language Expert",
+    role="Expert in translation and language nuances",
+    model=OpenAIChat("gpt-4o"),
+    instructions="""
+    TRANSLATION PROTOCOL:
+    1. Provide accurate translations that maintain the original meaning
+    2. Consider cultural context and nuances
+    3. Ensure natural language flow in the target language
+    4. Avoid literal translations that may sound awkward
+    5. Preserve any technical terms or proper nouns appropriately
+    6. Return only the translated text without additional explanations
+    """,
+    show_tool_calls=True,
+)
 
 browser_agent = Agent(
     name="Browser Automation Agent",
@@ -276,6 +305,7 @@ creative_team = Team(
         accessibility_agent,
         animation_agent,
         brand_agent,
+        language_agent,  # Add language agent
     ],
     show_members_responses=True,
     markdown=True,
@@ -290,6 +320,7 @@ creative_team = Team(
         "Animation Specialist handles motion design and micro-interactions.",
         "Brand Strategist ensures brand consistency across all elements.",
         "Responsive Design Expert manages cross-device compatibility.",
+        "Use Language Expert for all translation tasks.",
         "Route all other requests to the most appropriate specialist.",
         "For complex projects, coordinate multiple specialists to provide comprehensive solutions.",
         "Always consider accessibility, brand consistency, and responsive design in all recommendations."
@@ -302,6 +333,7 @@ creative_team = Team(
     - Typography is readable and accessible
     - Color schemes are accessible and on-brand
     - Microcopy is clear and user-friendly
+    - Translations are accurate and natural
     - All recommendations include implementation guidance
     """
 )
@@ -337,7 +369,40 @@ razorpay_tracking_agent = Agent(
 def design():
     prompt = request.json.get("prompt", "")
     image_url = request.json.get("image_url")
+    element = request.json.get("element")
+    page_content = request.json.get("pageContent")
 
+    # If element is present, build a prompt with its content
+    if element:
+        text = element.get('text', '').strip()
+        src = element.get('src', '').strip()
+        if text:
+            prompt = f"{prompt}\nElement text: {text}"
+        elif src:
+            # Use the image source URL directly
+            image_url = src
+            prompt = f"{prompt}\nAnalyze this image: {src}"
+        else:
+            return jsonify({"response": "No text or image found in the selected element."})
+
+    # If page content is present, add it to the context
+    if page_content:
+        context = f"""
+        Current page information:
+        - Title: {page_content.get('title', '')}
+        - URL: {page_content.get('url', '')}
+        - Content: {page_content.get('text', '')[:2000]}  # Limit content length
+        
+        User question: {prompt}
+        
+        Please provide a helpful response based on the page content and the user's question.
+        If the question is about the page content, use the provided information to answer.
+        If the question is about navigation or actions, provide clear instructions.
+        If the question is about forms or data extraction, explain how to accomplish the task.
+        """
+        prompt = context
+
+    # Create image list with either the direct image_url or the element's src
     images = [Image(url=image_url)] if image_url else []
 
     try:
@@ -492,6 +557,97 @@ def track_payments():
         return jsonify({
             "status": "success",
             "payment_links": response_data.get("payment_links", [])
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/analyze-images", methods=["POST"])
+async def analyze_images():
+    """
+    Analyze images in the currently active Chrome tab.
+    Requires Chrome to be running with remote debugging enabled.
+    """
+    try:
+        # Get the prompt from the request
+        data = request.get_json()
+        prompt = data.get('prompt', "Look at each image on the current page and describe what you see in detail.")
+        
+        # Initialize the toolkit
+        toolkit = AnalyzeImageToolkit()
+        
+        # Run the analysis and await the result
+        result = await toolkit.analyze_current_tab(prompt)
+        
+        if result.get("success"):
+            return jsonify({
+                "status": "success",
+                "analysis": result.get("data"),
+                "message": result.get("message")
+            })
+        else:
+            return jsonify({
+                "status": "error",
+                "message": result.get("message")
+            }), 400
+            
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"Error during image analysis: {str(e)}"
+        }), 500
+
+@app.route("/api/browser/parallel-tasks", methods=["POST"])
+async def run_parallel_browser_tasks():
+    data = request.get_json()
+    if not data or 'tasks' not in data or not isinstance(data['tasks'], list):
+        return jsonify({"error": "Request must include a 'tasks' list."}), 400
+    try:
+        results = await parallel_browser_toolkit.run_parallel_tasks(data['tasks'])
+        return jsonify({"results": results})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/translate", methods=["POST"])
+def translate():
+    element = request.json.get("element")
+    prompt = request.json.get("prompt", "")
+    
+    if not element or not element.get('text'):
+        return jsonify({"error": "No text to translate"}), 400
+
+    text = element.get('text', '').strip()
+    if not text:
+        return jsonify({"error": "Empty text"}), 400
+
+    # Extract target language from prompt
+    target_language = None
+    if "Translate this text to" in prompt:
+        target_language = prompt.split("Translate this text to")[1].split(".")[0].strip()
+
+    if not target_language:
+        return jsonify({"error": "Target language not specified"}), 400
+
+    try:
+        # Create a task for the language expert to handle translation
+        task = f"""
+        Translate the following text to {target_language}. 
+        Focus on providing a natural, accurate translation that maintains the original meaning.
+        Return only the translated text without any additional context or explanation.
+
+        Text to translate: {text}
+        Target language: {target_language}
+        """
+
+        result = language_agent.run(task)
+        
+        # Return the translation directly
+        return jsonify({
+            "translations": [{
+                "language": target_language,
+                "text": result.content.strip(),
+                "meaning": None
+            }]
         })
 
     except Exception as e:
