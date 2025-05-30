@@ -20,8 +20,9 @@ from browser_toolkit import BrowserUseToolkit
 from razorpay_toolkit import RazorpayPaymentLink
 from razorpay_toolkit import RazorpayTrackerToolkit
 from agno.tools.resend import ResendTools
-from analyze_toolkit import AnalyzeImageToolkit  # Add this import
-from parallel_browser_toolkit import ParallelBrowserToolkit  # Add this import
+from analyze_toolkit import AnalyzeToolkit  # Add this import
+from agno.tools.firecrawl import FirecrawlTools
+from agno.tools.website import WebsiteTools
 
 load_dotenv()
 
@@ -31,11 +32,11 @@ CORS(app)
 # Initialize browser toolkit (persistent session)
 browseruse_toolkit = BrowserUseToolkit()
 # Initialize parallel browser toolkit
-parallel_browser_toolkit = ParallelBrowserToolkit()
 
 # Initialize Razorpay toolkit
 razorpaypayment_toolkit = RazorpayPaymentLink()
 razorpay_tracker_toolkit = RazorpayTrackerToolkit()
+
 
 # Design specialists
 visual_agent = Agent(
@@ -60,7 +61,7 @@ image_agent = Agent(
     name="Image Analysis Agent",
     role="Analyze images and extract visual insights or design inspiration.",
     model=OpenAIChat(id="gpt-4o"),
-    tools=[AnalyzeImageToolkit()],  # Replace DuckDuckGoTools with AnalyzeImageToolkit
+    tools=[AnalyzeToolkit()],  # Replace DuckDuckGoTools with AnalyzeToolkit
     markdown=True,
     instructions="""
     IMAGE ANALYSIS PROTOCOL:
@@ -253,6 +254,7 @@ mail_agent = Agent(
     show_tool_calls=True,
 )
 
+
 # Coordinated Team
 payment_team = Team(
     name="PaymentProcessingTeam",
@@ -365,6 +367,96 @@ razorpay_tracking_agent = Agent(
     show_tool_calls=True,
 )
 
+# Add Flashcard Agent
+flashcard_agent = Agent(
+    name="FlashcardGenerator",
+    role="Generates educational flashcards from web content",
+    model=OpenAIChat("gpt-4o"),
+    tools=[FirecrawlTools(scrape=False, crawl=True), WebsiteTools()],
+    instructions="""
+    FLASHCARD GENERATION PROTOCOL:
+
+    1. CONTENT EXTRACTION & ORGANIZATION:
+       - Extract key concepts and main ideas from the content
+       - Group related concepts together
+       - Create a logical flow of information
+       - Focus on important facts and relationships
+
+    2. FLASHCARD STRUCTURE:
+       Each flashcard must follow this exact format:
+       ```
+       # Front: [Clear, concise question or concept]
+       
+       ## Back
+       ### Definition
+       [Clear and concise definition or explanation]
+       
+       ### Key Points
+       - [Point 1]
+       - [Point 2]
+       - [Point 3]
+       
+       ### Examples
+       - [Example 1]
+       - [Example 2]
+       
+       ### Additional Context
+       [Any relevant context or connections to other concepts]
+       ```
+
+    3. QUALITY REQUIREMENTS:
+       - Front must be a clear, specific question or concept
+       - Back must contain comprehensive but concise information
+       - Include real-world examples
+       - Use bullet points for better readability
+       - Maintain consistent formatting
+       - Ensure each card is self-contained
+       - Number each card (e.g., "Card 1:", "Card 2:", etc.)
+
+    4. CONTENT GUIDELINES:
+       - Use active voice
+       - Keep language simple and clear
+       - Include practical applications
+       - Add relevant context
+       - Connect related concepts
+       - Use markdown formatting for structure
+
+    5. OUTPUT FORMAT:
+       - Each card must start with "Card X:" followed by the front
+       - Front must be prefixed with "Front:"
+       - Back must be prefixed with "Back:"
+       - Use ### for subsections within the back
+       - Use bullet points for lists
+       - Separate cards with blank lines
+       - Include at least 5-10 cards per topic
+       - Ensure proper markdown formatting
+
+    6. EXAMPLE FORMAT:
+       ```
+       Card 1:
+       Front: What is photosynthesis?
+       
+       Back:
+       ### Definition
+       The process by which plants convert light energy into chemical energy
+       
+       ### Key Points
+       - Occurs in chloroplasts
+       - Requires sunlight, water, and CO2
+       - Produces glucose and oxygen
+       
+       ### Examples
+       - Green leaves in sunlight
+       - Algae in water
+       
+       ### Additional Context
+       Essential for life on Earth as it produces oxygen and food
+       ```
+    """,
+    show_tool_calls=True,
+    markdown=True
+)
+
 @app.route("/api/ai-response", methods=["POST"])
 def design():
     prompt = request.json.get("prompt", "")
@@ -424,6 +516,7 @@ async def handle_browser_task():
         return jsonify({"result": response})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
     
 @app.route("/api/payments/generate-link", methods=["POST"])
 async def generate_payment_link():
@@ -574,7 +667,7 @@ async def analyze_images():
         prompt = data.get('prompt', "Look at each image on the current page and describe what you see in detail.")
         
         # Initialize the toolkit
-        toolkit = AnalyzeImageToolkit()
+        toolkit = AnalyzeToolkit()
         
         # Run the analysis and await the result
         result = await toolkit.analyze_current_tab(prompt)
@@ -596,9 +689,42 @@ async def analyze_images():
             "status": "error",
             "message": f"Error during image analysis: {str(e)}"
         }), 500
+    
+@app.route("/api/analyze-tab", methods=["POST"])
+async def analyze_tab():
+    """
+    Analyze Everything in the currently active Chrome tab.
+    Requires Chrome to be running with remote debugging enabled.
+    """
+    data = request.get_json()
+    if not data or 'prompt' not in data:
+        return jsonify({"error": "Prompt is required"}), 400
+    
+    prompt = data.get('prompt')
 
-@app.route("/api/browser/parallel-tasks", methods=["POST"])
-async def run_parallel_browser_tasks():
+    try:
+        # Initialize the toolkit
+        toolkit = AnalyzeToolkit()
+        
+        # Run the analysis with the dynamic prompt and await the result
+        result = await toolkit.analyze_current_tab(prompt)
+        
+        if result.get("success"):
+            return jsonify({
+                "status": "success",
+                "analysis": result.get("data"),
+                "message": result.get("message")
+            })
+        else:
+            # Ensure error response format is consistent
+            return jsonify({
+                "status": "error",
+                "message": result.get("message") or "Image analysis failed"
+            }), 400
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
     data = request.get_json()
     if not data or 'tasks' not in data or not isinstance(data['tasks'], list):
         return jsonify({"error": "Request must include a 'tasks' list."}), 400
@@ -648,6 +774,53 @@ def translate():
                 "text": result.content.strip(),
                 "meaning": None
             }]
+        })
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/generate-flashcards", methods=["POST"])
+async def generate_flashcards():
+    data = request.get_json()
+    if not data or 'url' not in data:
+        return jsonify({"error": "URL is required"}), 400
+
+    try:
+        # Create task for the agent
+        task = f"""
+        Generate comprehensive educational flashcards from this URL: {data['url']}
+        
+        Requirements:
+        1. Extract key concepts and main ideas
+        2. Create clear, engaging questions
+        3. Provide detailed, well-structured answers
+        4. Include practical examples
+        5. Use proper markdown formatting
+        6. Generate at least 5-10 cards
+        7. Ensure each card follows the exact format:
+           # Question
+           
+           ## Definition
+           [Clear definition]
+           
+           ## Key Points
+           - [Point 1]
+           - [Point 2]
+           
+           ## Examples
+           - [Example 1]
+           - [Example 2]
+           
+           ## Additional Context
+           [Relevant context]
+        """
+
+        # Run the agent
+        result = await flashcard_agent.arun(task)
+        
+        return jsonify({
+            "status": "success",
+            "flashcards": result.content
         })
 
     except Exception as e:

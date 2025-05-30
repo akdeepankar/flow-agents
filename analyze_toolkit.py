@@ -8,8 +8,8 @@ from browser_use.browser.browser import Browser, BrowserConfig
 from browser_use.browser.context import BrowserContextConfig
 from langchain_openai import ChatOpenAI
 
-class AnalyzeImageToolkit:
-    """Toolkit for analyzing images in browser tabs using robust context switching."""
+class AnalyzeToolkit:
+    """Toolkit for analyzing Elements in browser tabs using robust context switching."""
     
     def __init__(self):
         self.tools = [self.analyze_current_tab]
